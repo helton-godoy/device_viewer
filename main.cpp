@@ -215,9 +215,11 @@ int main() {
                 }
                 break;
             case KEY_RESIZE:
-                 getmaxyx(stdscr, term_rows, term_cols);
-                 // Re-check logic or redraw if necessary on resize
-                 break;
+                getmaxyx(stdscr, term_rows, term_cols);
+                // On resize, clear the screen to prevent artifacts from the terminal's own redraw.
+                // The main loop will then handle redrawing the pad and hint bar correctly.
+                clear();
+                break;
         }
     }
 
