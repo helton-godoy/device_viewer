@@ -88,15 +88,34 @@ void print_bullets(WINDOW* pad, int& y, const std::string& label, const std::vec
     }
 }
 
-std::string class_to_title(const std::string& class_name) {
-    if (class_name.find("VGA") != std::string::npos || class_name.find("3D") != std::string::npos) return "🖥️  Placa de Vídeo";
-    if (class_name.find("Ethernet") != std::string::npos) return "🔌 Rede (Ethernet)";
-    if (class_name.find("Network") != std::string::npos) return "📡 Rede (Wireless)";
-    if (class_name.find("Audio") != std::string::npos) return "🎵 Áudio";
-    if (class_name.find("USB") != std::string::npos) return "🔗 Controlador USB";
-    if (class_name.find("SATA") != std::string::npos || class_name.find("Non-Volatile") != std::string::npos) return "📀 Armazenamento";
-    if (class_name.find("Host bridge") != std::string::npos || class_name.find("PCI bridge") != std::string::npos) return "🧱 Ponte / Chipset";
-    return "❓ Dispositivo PCI";
+// New struct to hold title and color info
+struct TitleInfo {
+    std::string text;
+    int color_pair_id;
+};
+
+// Comprehensive class mapping function, mirroring the shell script
+TitleInfo class_to_title(const std::string& class_name) {
+    if (class_name.find("VGA compatible controller") != std::string::npos) return {"🖥️  Placa de Vídeo", COLOR_PAIR_GREEN};
+    if (class_name.find("3D controller") != std::string::npos) return {"🎮  Acelerador 3D", COLOR_PAIR_GREEN};
+    if (class_name.find("Ethernet controller") != std::string::npos) return {"🔌 Rede (Ethernet)", COLOR_PAIR_BLUE};
+    if (class_name.find("Network controller") != std::string::npos) return {"📡 Rede (Wireless)", COLOR_PAIR_BLUE};
+    if (class_name.find("Multimedia audio controller") != std::string::npos || class_name.find("Audio device") != std::string::npos) return {"🎵 Áudio", COLOR_PAIR_MAGENTA};
+    if (class_name.find("USB controller") != std::string::npos) return {"🔗 Controlador USB", COLOR_PAIR_CYAN};
+    if (class_name.find("SATA controller") != std::string::npos) return {"📀 Controlador SATA", COLOR_PAIR_YELLOW};
+    if (class_name.find("Non-Volatile memory controller") != std::string::npos) return {"💾 Controlador NVMe", COLOR_PAIR_YELLOW};
+    if (class_name.find("Host bridge") != std::string::npos) return {"🏛️  Ponte (Host Bridge)", COLOR_PAIR_VALUE};
+    if (class_name.find("System peripheral") != std::string::npos) return {"⚙️  Periférico do Sistema", COLOR_PAIR_VALUE};
+    if (class_name.find("SMBus") != std::string::npos) return {"📉 Controlador SMBus", COLOR_PAIR_CYAN};
+    if (class_name.find("Signal processing controller") != std::string::npos) return {"🔊 Controlador de Processamento de Sinal", COLOR_PAIR_CYAN};
+    if (class_name.find("RAID bus controller") != std::string::npos) return {"🗄️  Controlador RAID", COLOR_PAIR_YELLOW};
+    if (class_name.find("RAM memory") != std::string::npos) return {"🧠 Controlador de Memória RAM", COLOR_PAIR_MAGENTA};
+    if (class_name.find("Serial bus controller") != std::string::npos) return {"🧩 Controlador Serial/I2C/SPI", COLOR_PAIR_CYAN};
+    if (class_name.find("Communication controller") != std::string::npos) return {"📨 Controlador de Comunicação", COLOR_PAIR_CYAN};
+    if (class_name.find("PCI bridge") != std::string::npos) return {"🧱 Ponte PCI Express", COLOR_PAIR_VALUE};
+    if (class_name.find("ISA bridge") != std::string::npos) return {"🧱 Ponte ISA", COLOR_PAIR_VALUE};
+
+    return {"❓ Dispositivo PCI (" + class_name + ")", COLOR_PAIR_RED};
 }
 
 void print_centered_header(WINDOW* win, int& y, const std::string& title) {
@@ -176,10 +195,10 @@ int main() {
     print_centered_header(pad, y, "Dispositivos PCI");
 
     for (const auto& dev : pci_devices) {
-        std::string title = class_to_title(dev.class_name);
-        wattron(pad, A_BOLD);
-        mvwprintw(pad, y++, 1, title.c_str());
-        wattroff(pad, A_BOLD);
+        TitleInfo title = class_to_title(dev.class_name);
+        wattron(pad, COLOR_PAIR(title.color_pair_id) | A_BOLD);
+        mvwprintw(pad, y++, 1, title.text.c_str());
+        wattroff(pad, COLOR_PAIR(title.color_pair_id) | A_BOLD);
 
         print_kv(pad, y, "Dispositivo", dev.name);
         print_kv(pad, y, "Fabricante", dev.vendor);
