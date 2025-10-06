@@ -138,7 +138,7 @@ std::vector<PciDevice> getGpuDevices() {
     loadPciDeviceCache();
     std::vector<PciDevice> devices;
     for (size_t i = 0; i < pci_device_cache.size(); ++i) {
-        if (pci_class_cache[i].find("VGA compatible controller") != std::string::npos) {
+        if (pci_class_cache[i] == "VGA compatible controller" || pci_class_cache[i] == "3D controller") {
             devices.push_back(pci_device_cache[i]);
         }
     }
@@ -148,7 +148,7 @@ std::vector<PciDevice> getAudioDevices() {
     loadPciDeviceCache();
     std::vector<PciDevice> devices;
     for (size_t i = 0; i < pci_device_cache.size(); ++i) {
-        if (pci_class_cache[i].find("Audio") != std::string::npos) {
+        if (pci_class_cache[i] == "Multimedia audio controller" || pci_class_cache[i] == "Audio device") {
             devices.push_back(pci_device_cache[i]);
         }
     }
@@ -158,8 +158,7 @@ std::vector<PciDevice> getNetworkDevices() {
     loadPciDeviceCache();
     std::vector<PciDevice> devices;
     for (size_t i = 0; i < pci_device_cache.size(); ++i) {
-        if (pci_class_cache[i].find("Ethernet controller") != std::string::npos ||
-            pci_class_cache[i].find("Network controller") != std::string::npos) {
+        if (pci_class_cache[i] == "Ethernet controller" || pci_class_cache[i] == "Network controller") {
             devices.push_back(pci_device_cache[i]);
         }
     }
