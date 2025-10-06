@@ -70,22 +70,28 @@ BiosInfo getBiosInfo() {
     return info;
 }
 
-void parseLspciVmm(const std::string& class_filter, std::vector<PciDevice>& devices) {
-    std::string command = "lspci -vmm";
+void parseLspciVmm(const std::string& command, std::vector<PciDevice>& devices, const std::string& class_filter = "") {
     std::string output = exec(command.c_str());
+    if (output.empty()) return;
+
     std::stringstream ss(output);
     std::string line;
     PciDevice current_device;
     std::string current_class;
+    bool device_block_started = false;
 
     while (std::getline(ss, line)) {
         if (line.empty()) {
-            if (!current_class.empty() && current_class.find(class_filter) != std::string::npos) {
-                devices.push_back(current_device);
+            if (device_block_started) {
+                if (class_filter.empty() || (!current_class.empty() && current_class.find(class_filter) != std::string::npos)) {
+                    devices.push_back(current_device);
+                }
+                current_device = {};
+                current_class = "";
+                device_block_started = false;
             }
-            current_device = {};
-            current_class = "";
         } else {
+            device_block_started = true;
             if (line.rfind("Class:", 0) == 0) {
                 current_class = getValueFromLine(line, "Class:");
             } else if (line.rfind("Vendor:", 0) == 0) {
@@ -97,21 +103,25 @@ void parseLspciVmm(const std::string& class_filter, std::vector<PciDevice>& devi
             }
         }
     }
-    if (!current_class.empty() && current_class.find(class_filter) != std::string::npos) {
-        devices.push_back(current_device);
+    if (device_block_started) {
+        if (class_filter.empty() || (!current_class.empty() && current_class.find(class_filter) != std::string::npos)) {
+            devices.push_back(current_device);
+        }
     }
 }
 
 std::vector<PciDevice> getGpuDevices() {
     std::vector<PciDevice> devices;
-    parseLspciVmm("VGA compatible controller", devices);
+    parseLspciVmm("lspci -vmm", devices, "VGA compatible controller");
     return devices;
 }
 std::string get_pci_slot_from_device_path(const std::string& path) {
     fs::path device_path(path);
-    if (fs::is_symlink(device_path)) {
+    if (fs::exists(device_path) && fs::is_symlink(device_path)) {
         fs::path target_path = fs::read_symlink(device_path);
-        return target_path.filename().string();
+        if (target_path.string().find("pci") != std::string::npos) {
+            return target_path.filename().string();
+        }
     }
     return "";
 }
@@ -127,38 +137,11 @@ std::vector<PciDevice> getAudioDevices() {
     for (const auto& entry : fs::directory_iterator(sound_path)) {
         if (entry.is_directory() && entry.path().filename().string().rfind("card", 0) == 0) {
             fs::path device_symlink = entry.path() / "device";
-            if (fs::exists(device_symlink) && fs::is_symlink(device_symlink)) {
-                std::string pci_slot = get_pci_slot_from_device_path(device_symlink);
-                if (!pci_slot.empty()) {
-                    std::string cmd = "lspci -s " + pci_slot + " -vmm";
-                    std::string output = exec(cmd.c_str());
-                    std::stringstream ss(output);
-                    std::string line;
-                    PciDevice current_device;
-                    bool device_found = false;
+            std::string pci_slot = get_pci_slot_from_device_path(device_symlink.string());
 
-                    while (std::getline(ss, line)) {
-                        if (line.empty()) {
-                            if (device_found) {
-                                devices.push_back(current_device);
-                                current_device = {};
-                                device_found = false;
-                            }
-                        } else {
-                            device_found = true;
-                            if (line.rfind("Vendor:", 0) == 0) {
-                                current_device.vendor = getValueFromLine(line, "Vendor:");
-                            } else if (line.rfind("Device:", 0) == 0) {
-                                current_device.name = getValueFromLine(line, "Device:");
-                            } else if (line.rfind("Driver:", 0) == 0) {
-                                current_device.driver = getValueFromLine(line, "Driver:");
-                            }
-                        }
-                    }
-                    if (device_found) {
-                        devices.push_back(current_device);
-                    }
-                }
+            if (!pci_slot.empty()) {
+                std::string cmd = "lspci -s " + pci_slot + " -vmm";
+                parseLspciVmm(cmd, devices);
             }
         }
     }
@@ -166,8 +149,8 @@ std::vector<PciDevice> getAudioDevices() {
 }
 std::vector<PciDevice> getNetworkDevices() {
     std::vector<PciDevice> devices;
-    parseLspciVmm("Ethernet controller", devices);
-    parseLspciVmm("Network controller", devices);
+    parseLspciVmm("lspci -vmm", devices, "Ethernet controller");
+    parseLspciVmm("lspci -vmm", devices, "Network controller");
     return devices;
 }
 std::vector<MonitorInfo> getMonitorInfo() {
