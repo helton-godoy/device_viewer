@@ -13,6 +13,7 @@ struct PciDevice {
     std::string vendor;
     std::string driver;
     std::string bus = "PCI";
+    std::string slot; // Adicionado para guardar o slot PCI
 };
 struct MonitorInfo {
     std::string name;

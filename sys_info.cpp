@@ -115,7 +115,9 @@ void loadPciDeviceCache() {
             }
         } else {
             device_block_started = true;
-            if (line.rfind("Class:", 0) == 0) {
+            if (line.rfind("Slot:", 0) == 0) {
+                current_device.slot = getValueFromLine(line, "Slot:");
+            } else if (line.rfind("Class:", 0) == 0) {
                 current_class = getValueFromLine(line, "Class:");
             } else if (line.rfind("Vendor:", 0) == 0) {
                 current_device.vendor = getValueFromLine(line, "Vendor:");
@@ -133,13 +135,33 @@ void loadPciDeviceCache() {
     pci_cache_loaded = true;
 }
 
-// Simplified functions that filter the cache
+// Helper to get driver info for a specific device
+std::string getKernelDriver(const std::string& slot) {
+    if (slot.empty()) return "";
+    std::string command = "lspci -s " + slot + " -k";
+    std::string output = exec(command.c_str());
+    std::stringstream ss(output);
+    std::string line;
+    while (std::getline(ss, line)) {
+        size_t pos = line.find("Kernel driver in use:");
+        if (pos != std::string::npos) {
+            std::string driver = line.substr(pos + 21); // length of "Kernel driver in use:"
+            trim(driver);
+            return driver;
+        }
+    }
+    return ""; // Return empty if not found
+}
+
+// Simplified functions that filter the cache and add driver info
 std::vector<PciDevice> getGpuDevices() {
     loadPciDeviceCache();
     std::vector<PciDevice> devices;
     for (size_t i = 0; i < pci_device_cache.size(); ++i) {
         if (pci_class_cache[i] == "VGA compatible controller" || pci_class_cache[i] == "3D controller") {
-            devices.push_back(pci_device_cache[i]);
+            PciDevice dev = pci_device_cache[i];
+            dev.driver = getKernelDriver(dev.slot);
+            devices.push_back(dev);
         }
     }
     return devices;
@@ -149,7 +171,9 @@ std::vector<PciDevice> getAudioDevices() {
     std::vector<PciDevice> devices;
     for (size_t i = 0; i < pci_device_cache.size(); ++i) {
         if (pci_class_cache[i] == "Multimedia audio controller" || pci_class_cache[i] == "Audio device") {
-            devices.push_back(pci_device_cache[i]);
+            PciDevice dev = pci_device_cache[i];
+            dev.driver = getKernelDriver(dev.slot);
+            devices.push_back(dev);
         }
     }
     return devices;
@@ -159,7 +183,9 @@ std::vector<PciDevice> getNetworkDevices() {
     std::vector<PciDevice> devices;
     for (size_t i = 0; i < pci_device_cache.size(); ++i) {
         if (pci_class_cache[i] == "Ethernet controller" || pci_class_cache[i] == "Network controller") {
-            devices.push_back(pci_device_cache[i]);
+            PciDevice dev = pci_device_cache[i];
+            dev.driver = getKernelDriver(dev.slot);
+            devices.push_back(dev);
         }
     }
     return devices;

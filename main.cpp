@@ -10,7 +10,11 @@
 #define COLOR_PAIR_HEADER 1
 #define COLOR_PAIR_TITLE  2
 #define COLOR_PAIR_VALUE  3
+#define COLOR_PAIR_HINT   4
 
+// --- Helper Functions for Drawing ---
+
+// Wraps long text into multiple lines
 std::vector<std::string> wrap_text(const std::string& text, int max_width) {
     std::vector<std::string> lines;
     if (text.empty() || max_width <= 0) {
@@ -36,115 +40,189 @@ std::vector<std::string> wrap_text(const std::string& text, int max_width) {
     return lines;
 }
 
-int print_info_in_win(WINDOW* win, int y, int x, const std::string& title, const std::string& value) {
-    const int title_col = x, colon_col = x + 16, value_col = x + 18; const int value_max_width = getmaxx(win) - value_col - 1;
-    wattron(win, COLOR_PAIR(COLOR_PAIR_TITLE)); mvwprintw(win, y, title_col, title.c_str()); wattroff(win, COLOR_PAIR(COLOR_PAIR_TITLE));
-    mvwprintw(win, y, colon_col, ":");
-    std::vector<std::string> value_lines = wrap_text(value, value_max_width);
-    wattron(win, COLOR_PAIR(COLOR_PAIR_VALUE)); int lines_used = value_lines.empty() ? 1 : 0;
-    for (const auto& line : value_lines) { mvwprintw(win, y + lines_used, value_col, line.c_str()); lines_used++; }
-    wattroff(win, COLOR_PAIR(COLOR_PAIR_VALUE)); return lines_used;
-}
-int calculate_content_height(const std::vector<std::string>& values, int value_max_width) {
-    int total_height = 0; for (const auto& value : values) { total_height += wrap_text(value, value_max_width).size(); } return total_height;
+// Prints a key-value pair and returns the number of lines used
+int print_info(WINDOW* pad, int& y, const std::string& title, const std::string& value, int value_col_width) {
+    const int title_col = 2, colon_col = 18, value_col = 20;
+    wattron(pad, COLOR_PAIR(COLOR_PAIR_TITLE));
+    mvwprintw(pad, y, title_col, title.c_str());
+    wattroff(pad, COLOR_PAIR(COLOR_PAIR_TITLE));
+    mvwprintw(pad, y, colon_col, ":");
+
+    std::vector<std::string> value_lines = wrap_text(value, value_col_width);
+    int lines_used = 0;
+    wattron(pad, COLOR_PAIR(COLOR_PAIR_VALUE));
+    for (const auto& line : value_lines) {
+        mvwprintw(pad, y + lines_used, value_col, line.c_str());
+        lines_used++;
+    }
+    wattroff(pad, COLOR_PAIR(COLOR_PAIR_VALUE));
+    y += lines_used;
+    return lines_used;
 }
 
+// Prints a section header with a box
+void print_header(WINDOW* pad, int& y, int width, const std::string& title) {
+    wattron(pad, COLOR_PAIR(COLOR_PAIR_HEADER));
+    box(pad, 0, 0); // Temporary box for width calculation, will be overwritten
+    mvwhline(pad, y, 1, ACS_HLINE, width - 2);
+    mvwprintw(pad, y, 3, " %s ", title.c_str());
+    wattroff(pad, COLOR_PAIR(COLOR_PAIR_HEADER));
+    y += 2;
+}
+
+// Prints a visual separator
+void print_separator(WINDOW* pad, int& y, int width) {
+    wattron(pad, COLOR_PAIR(COLOR_PAIR_HEADER));
+    mvwhline(pad, y, 1, ACS_HLINE, width - 2);
+    wattroff(pad, COLOR_PAIR(COLOR_PAIR_HEADER));
+    y++;
+}
+
+// --- Main Application ---
 int main() {
     setlocale(LC_ALL, "");
-    initscr(); cbreak(); noecho(); curs_set(0); start_color(); use_default_colors(); keypad(stdscr, TRUE);
-    init_pair(COLOR_PAIR_HEADER, COLOR_CYAN, -1); init_pair(COLOR_PAIR_TITLE, COLOR_YELLOW, -1); init_pair(COLOR_PAIR_VALUE, COLOR_WHITE, -1);
+    initscr(); cbreak(); noecho(); curs_set(0);
+    start_color(); use_default_colors(); keypad(stdscr, TRUE);
+    init_pair(COLOR_PAIR_HEADER, COLOR_CYAN, -1);
+    init_pair(COLOR_PAIR_TITLE, COLOR_YELLOW, -1);
+    init_pair(COLOR_PAIR_VALUE, COLOR_WHITE, -1);
+    init_pair(COLOR_PAIR_HINT, COLOR_BLACK, COLOR_WHITE);
 
-    int ch;
-    while (true) {
-        int term_rows, term_cols;
-        getmaxyx(stdscr, term_rows, term_cols);
+    // --- Initial Data Fetch ---
+    CpuInfo cpu = getCpuInfo();
+    BoardInfo board = getBoardInfo();
+    BiosInfo bios = getBiosInfo();
+    std::vector<PciDevice> gpus = getGpuDevices();
+    std::vector<MonitorInfo> monitors = getMonitorInfo();
+    std::vector<PciDevice> audio_devs = getAudioDevices();
+    std::vector<PciDevice> net_devs = getNetworkDevices();
 
-        if (term_cols < 80) {
-            erase(); mvprintw(0, 0, "Terminal muito estreito. Largura mínima: 80 colunas.");
-            refresh(); timeout(2000); ch = getch(); if (ch == 'q' || ch == 'Q') break; continue;
+    // --- Pad Creation ---
+    const int PAD_HEIGHT = 200; // A large virtual height for all content
+    int term_rows, term_cols;
+    getmaxyx(stdscr, term_rows, term_cols);
+    WINDOW *pad = newpad(PAD_HEIGHT, term_cols);
+    keypad(pad, TRUE);
+
+    // --- Draw All Static Info to Pad ONCE ---
+    int y = 1;
+    int content_width = term_cols - 4;
+    int value_width = content_width - 20;
+
+    print_header(pad, y, term_cols, "Processador (CPU)");
+    print_info(pad, y, "Modelo", cpu.model, value_width);
+    print_info(pad, y, "Núcleos", cpu.cores, value_width);
+    print_info(pad, y, "Threads", cpu.threads, value_width);
+    print_info(pad, y, "Frequência", cpu.max_freq, value_width);
+    y++;
+
+    print_header(pad, y, term_cols, "Placa-mãe & BIOS");
+    print_info(pad, y, "Fabricante", board.manufacturer, value_width);
+    print_info(pad, y, "Produto", board.product_name, value_width);
+    print_info(pad, y, "Versão", board.version, value_width);
+    print_info(pad, y, "Nro. de Série", board.serial_number, value_width);
+    print_separator(pad, y, term_cols);
+    print_info(pad, y, "BIOS Fabricante", bios.vendor, value_width);
+    print_info(pad, y, "BIOS Versão", bios.version, value_width);
+    print_info(pad, y, "BIOS Data", bios.release_date, value_width);
+    y++;
+
+    print_header(pad, y, term_cols, "Dispositivos Gráficos");
+    if (!gpus.empty()) {
+        for (const auto& gpu : gpus) {
+            print_info(pad, y, "Fabricante", gpu.vendor, value_width);
+            print_info(pad, y, "Modelo", gpu.name, value_width);
+            print_info(pad, y, "Driver em Uso", gpu.driver, value_width);
+            print_separator(pad, y, term_cols);
         }
+    } else {
+        mvwprintw(pad, y++, 2, "Nenhum dispositivo encontrado.");
+    }
+    y++;
 
-        CpuInfo cpu = getCpuInfo(); MemoryInfo mem = getMemoryInfo(); BoardInfo board = getBoardInfo();
-        BiosInfo bios = getBiosInfo(); std::vector<PciDevice> gpus = getGpuDevices();
-        std::vector<MonitorInfo> monitors = getMonitorInfo(); std::vector<PciDevice> audio_devs = getAudioDevices();
-        std::vector<PciDevice> net_devs = getNetworkDevices();
+    print_header(pad, y, term_cols, "Monitores");
+    if (!monitors.empty()) {
+        for (const auto& mon : monitors) {
+            print_info(pad, y, mon.name, mon.resolution, value_width);
+        }
+    } else {
+        mvwprintw(pad, y++, 2, "Nenhum monitor conectado.");
+    }
+    y++;
 
-        int margin = 2; int full_width = term_cols - (margin * 2); int half_width = (full_width - margin) / 2;
-        int right_half_width = full_width - half_width - margin; int right_half_start_x = margin + half_width + margin;
+    print_header(pad, y, term_cols, "Dispositivos de Som");
+    if(!audio_devs.empty()) {
+        for (const auto& dev : audio_devs) {
+            print_info(pad, y, "Fabricante", dev.vendor, value_width);
+            print_info(pad, y, "Modelo", dev.name, value_width);
+            print_info(pad, y, "Driver", dev.driver, value_width);
+            print_separator(pad, y, term_cols);
+        }
+    } else {
+         mvwprintw(pad, y++, 2, "Nenhum dispositivo encontrado.");
+    }
+    y++;
 
-        int board_h = calculate_content_height({board.manufacturer, board.product_name, board.version, board.serial_number}, half_width - 20);
-        int bios_h = calculate_content_height({bios.vendor, bios.version, bios.release_date}, right_half_width - 20);
-        int board_bios_height = std::max(board_h, bios_h) + 2;
-        int gpu_h = gpus.empty() ? 1 : calculate_content_height({gpus[0].vendor, gpus[0].name, gpus[0].driver}, half_width - 20);
-        int mon_h = monitors.empty() ? 1 : 0;
-        if (!monitors.empty()) { for(const auto& mon : monitors) { mon_h += calculate_content_height({mon.resolution}, right_half_width-20) + 1; } }
-        int gpu_mon_height = std::max(gpu_h, mon_h) + 2;
+    print_header(pad, y, term_cols, "Dispositivos de Rede");
+    if(!net_devs.empty()) {
+        for (const auto& dev : net_devs) {
+            print_info(pad, y, "Fabricante", dev.vendor, value_width);
+            print_info(pad, y, "Modelo", dev.name, value_width);
+            print_info(pad, y, "Driver", dev.driver, value_width);
+            print_separator(pad, y, term_cols);
+        }
+    } else {
+         mvwprintw(pad, y++, 2, "Nenhum dispositivo encontrado.");
+    }
+    y++;
 
-        int audio_list_h = audio_devs.empty() ? 2 : (audio_devs.size() * 5) -1;
-        int net_list_h = net_devs.empty() ? 2 : (net_devs.size() * 5) -1;
+    int total_lines = y;
 
-        int y_pos = 1;
-        WINDOW *cpu_win = newwin(7, full_width, y_pos, margin); y_pos += 7 + 1;
-        WINDOW *mem_win = newwin(4, full_width, y_pos, margin); y_pos += 4 + 1;
-        WINDOW *board_win = newwin(board_bios_height, half_width, y_pos, margin);
-        WINDOW *bios_win = newwin(board_bios_height, right_half_width, y_pos, right_half_start_x); y_pos += board_bios_height + 1;
-        WINDOW *gpu_win = newwin(gpu_mon_height, half_width, y_pos, margin);
-        WINDOW *mon_win = newwin(gpu_mon_height, right_half_width, y_pos, right_half_start_x); y_pos += gpu_mon_height + 1;
-        WINDOW *audio_win = newwin(audio_list_h + 2, full_width, y_pos, margin); y_pos += audio_list_h + 2 + 1;
-        WINDOW *net_win = newwin(net_list_h + 2, full_width, y_pos, margin);
+    // --- Main Loop for Input and Refreshing ---
+    int pad_pos = 0;
+    int ram_y = 6; // Fixed Y position for RAM info
+    while (true) {
+        // Fetch and display dynamic info (RAM)
+        MemoryInfo mem = getMemoryInfo();
+        print_header(pad, ram_y, term_cols, "Memória (RAM)");
+        int temp_y = ram_y; // use temp to not affect main y
+        print_info(pad, temp_y, "Total", mem.total, value_width);
+        print_info(pad, temp_y, "Em Uso", mem.used, value_width);
 
-        erase();
+        // Display scroll hint
+        std::string hint = " Use as SETAS para rolar | Pressione 'q' para sair ";
+        int hint_x = (term_cols - hint.length()) / 2;
+        wattron(stdscr, COLOR_PAIR(COLOR_PAIR_HINT));
+        mvwhline(stdscr, term_rows - 1, 0, ' ', term_cols);
+        mvprintw(term_rows - 1, hint_x, hint.c_str());
+        wattroff(stdscr, COLOR_PAIR(COLOR_PAIR_HINT));
 
-        int current_y;
+        // Refresh the screen with the visible part of the pad
+        prefresh(pad, pad_pos, 0, 0, 0, term_rows - 2, term_cols -1);
 
-        wattron(cpu_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(cpu_win, 0, 0); mvwprintw(cpu_win, 0, 2, " Processador (CPU) "); wattroff(cpu_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; current_y += print_info_in_win(cpu_win, current_y, 2, "Modelo", cpu.model); current_y += print_info_in_win(cpu_win, current_y, 2, "Núcleos", cpu.cores);
-        current_y += print_info_in_win(cpu_win, current_y, 2, "Threads", cpu.threads); print_info_in_win(cpu_win, current_y, 2, "Frequência", cpu.max_freq);
+        int ch = wgetch(pad);
+        if (ch == 'q' || ch == 'Q') break;
 
-        wattron(mem_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(mem_win, 0, 0); mvwprintw(mem_win, 0, 2, " Memória (RAM) "); wattroff(mem_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; current_y += print_info_in_win(mem_win, current_y, 2, "Total", mem.total); print_info_in_win(mem_win, current_y, 2, "Em Uso", mem.used);
-
-        wattron(board_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(board_win, 0, 0); mvwprintw(board_win, 0, 2, " Placa-mãe "); wattroff(board_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; current_y += print_info_in_win(board_win, current_y, 2, "Fabricante", board.manufacturer); current_y += print_info_in_win(board_win, current_y, 2, "Produto", board.product_name);
-        current_y += print_info_in_win(board_win, current_y, 2, "Versão", board.version); print_info_in_win(board_win, current_y, 2, "Nro. de Série", board.serial_number);
-
-        wattron(bios_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(bios_win, 0, 0); mvwprintw(bios_win, 0, 2, " BIOS "); wattroff(bios_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; current_y += print_info_in_win(bios_win, current_y, 2, "Fabricante", bios.vendor);
-        current_y += print_info_in_win(bios_win, current_y, 2, "Versão", bios.version); print_info_in_win(bios_win, current_y, 2, "Data", bios.release_date);
-
-        wattron(gpu_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(gpu_win, 0, 0); mvwprintw(gpu_win, 0, 2, " Dispositivos Gráficos "); wattroff(gpu_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; if (!gpus.empty()) { current_y += print_info_in_win(gpu_win, current_y, 2, "Fabricante", gpus[0].vendor);
-        current_y += print_info_in_win(gpu_win, current_y, 2, "Modelo", gpus[0].name); print_info_in_win(gpu_win, current_y, 2, "Driver em Uso", gpus[0].driver); } else { mvwprintw(gpu_win, 1, 2, "Nenhum dispositivo encontrado."); }
-
-        wattron(mon_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(mon_win, 0, 0); mvwprintw(mon_win, 0, 2, " Monitores "); wattroff(mon_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; if (!monitors.empty()) { for(const auto& mon : monitors) { current_y += print_info_in_win(mon_win, current_y, 2, mon.name, mon.resolution); } } else { mvwprintw(mon_win, 1, 2, "Nenhum monitor conectado."); }
-
-        wattron(audio_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(audio_win, 0, 0); mvwprintw(audio_win, 0, 2, " Dispositivos de Som "); wattroff(audio_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; if (!audio_devs.empty()) { for (size_t i = 0; i < audio_devs.size(); ++i) {
-            current_y += print_info_in_win(audio_win, current_y, 2, "Nome", audio_devs[i].name); current_y += print_info_in_win(audio_win, current_y, 2, "Fabricante", audio_devs[i].vendor);
-            current_y += print_info_in_win(audio_win, current_y, 2, "Driver", audio_devs[i].driver);
-            if (i < audio_devs.size() - 1) { std::string separator(getmaxx(audio_win) > 2 ? getmaxx(audio_win) - 2 : 0, '-');
-                wattron(audio_win, COLOR_PAIR(COLOR_PAIR_HEADER)); mvwprintw(audio_win, current_y++, 1, separator.c_str()); wattroff(audio_win, COLOR_PAIR(COLOR_PAIR_HEADER)); }
-        } } else { mvwprintw(audio_win, 1, 2, "Nenhum dispositivo encontrado."); }
-
-        wattron(net_win, COLOR_PAIR(COLOR_PAIR_HEADER)); box(net_win, 0, 0); mvwprintw(net_win, 0, 2, " Dispositivos de Rede "); wattroff(net_win, COLOR_PAIR(COLOR_PAIR_HEADER));
-        current_y = 1; if (!net_devs.empty()) { for (size_t i = 0; i < net_devs.size(); ++i) {
-            current_y += print_info_in_win(net_win, current_y, 2, "Nome", net_devs[i].name); current_y += print_info_in_win(net_win, current_y, 2, "Fabricante", net_devs[i].vendor);
-            current_y += print_info_in_win(net_win, current_y, 2, "Driver", net_devs[i].driver);
-            if (i < net_devs.size() - 1) { std::string separator(getmaxx(net_win) > 2 ? getmaxx(net_win) - 2 : 0, '-');
-                wattron(net_win, COLOR_PAIR(COLOR_PAIR_HEADER)); mvwprintw(net_win, current_y++, 1, separator.c_str()); wattroff(net_win, COLOR_PAIR(COLOR_PAIR_HEADER)); }
-        } } else { mvwprintw(net_win, 1, 2, "Nenhum dispositivo encontrado."); }
-
-        wnoutrefresh(stdscr); wnoutrefresh(cpu_win); wnoutrefresh(mem_win); wnoutrefresh(board_win);
-        wnoutrefresh(bios_win); wnoutrefresh(gpu_win); wnoutrefresh(mon_win); wnoutrefresh(audio_win); wnoutrefresh(net_win);
-        doupdate();
-
-        delwin(cpu_win); delwin(mem_win); delwin(board_win); delwin(bios_win);
-        delwin(gpu_win); delwin(mon_win); delwin(audio_win); delwin(net_win);
-
-        timeout(2000); ch = getch(); if (ch == 'q' || ch == 'Q') break; if (ch == KEY_RESIZE) erase();
+        switch(ch) {
+            case KEY_DOWN:
+                if (pad_pos < total_lines - term_rows + 2) {
+                    pad_pos++;
+                }
+                break;
+            case KEY_UP:
+                if (pad_pos > 0) {
+                    pad_pos--;
+                }
+                break;
+            case KEY_RESIZE:
+                 getmaxyx(stdscr, term_rows, term_cols);
+                 // Re-check logic or redraw if necessary on resize
+                 break;
+        }
     }
 
+    // --- Cleanup ---
+    delwin(pad);
     endwin();
     return 0;
 }
