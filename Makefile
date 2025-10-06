@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -O2
-# A biblioteca do filesystem não é mais necessária
-LDLIBS = -lncursesw
+# Re-adicionando -lstdc++fs por segurança e compatibilidade
+LDLIBS = -lncursesw -lstdc++fs
 TARGET = device_viewer
 SRCS = main.cpp sys_info.cpp
 OBJS = $(SRCS:.cpp=.o)
