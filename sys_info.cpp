@@ -7,10 +7,8 @@
 #include <iomanip>
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
 
-namespace fs = std::filesystem;
-
+// --- Helper Functions ---
 void trim(std::string& s) {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
     s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
@@ -33,6 +31,7 @@ std::string getValueFromLine(const std::string& line, const std::string& key) {
     return value;
 }
 
+// --- Standard Hardware Info ---
 CpuInfo getCpuInfo() {
     CpuInfo info; std::string lscpu_output = exec("lscpu"); std::stringstream ss(lscpu_output); std::string line;
     while(std::getline(ss, line)){
@@ -69,11 +68,36 @@ BiosInfo getBiosInfo() {
     trim(info.vendor); trim(info.version); trim(info.release_date);
     return info;
 }
+std::vector<MonitorInfo> getMonitorInfo() {
+    std::vector<MonitorInfo> monitors;
+    std::string xrandr_output = exec("xrandr --query");
+    std::stringstream ss(xrandr_output);
+    std::string line, current_monitor_name;
+    while (std::getline(ss, line)) {
+        if (line.find(" connected") != std::string::npos) {
+            current_monitor_name = line.substr(0, line.find(" "));
+        } else if (!current_monitor_name.empty() && line.find("   ") == 0 && line.find("*") != std::string::npos) {
+             MonitorInfo mon; mon.name = current_monitor_name;
+             std::stringstream res_ss(line); res_ss >> mon.resolution;
+             monitors.push_back(mon);
+             current_monitor_name = "";
+        }
+    }
+    return monitors;
+}
 
-void parseLspciVmm(const std::string& command, std::vector<PciDevice>& devices, const std::string& class_filter = "") {
-    std::string output = exec(command.c_str());
-    if (output.empty()) return;
+// --- PCI Device Handling (New Simplified Logic) ---
 
+// Cache for all PCI devices
+static std::vector<PciDevice> pci_device_cache;
+static std::vector<std::string> pci_class_cache;
+static bool pci_cache_loaded = false;
+
+// Function to load all devices from lspci -vmm into the cache
+void loadPciDeviceCache() {
+    if (pci_cache_loaded) return;
+
+    std::string output = exec("lspci -vmm");
     std::stringstream ss(output);
     std::string line;
     PciDevice current_device;
@@ -83,9 +107,8 @@ void parseLspciVmm(const std::string& command, std::vector<PciDevice>& devices, 
     while (std::getline(ss, line)) {
         if (line.empty()) {
             if (device_block_started) {
-                if (class_filter.empty() || (!current_class.empty() && current_class.find(class_filter) != std::string::npos)) {
-                    devices.push_back(current_device);
-                }
+                pci_device_cache.push_back(current_device);
+                pci_class_cache.push_back(current_class);
                 current_device = {};
                 current_class = "";
                 device_block_started = false;
@@ -104,69 +127,41 @@ void parseLspciVmm(const std::string& command, std::vector<PciDevice>& devices, 
         }
     }
     if (device_block_started) {
-        if (class_filter.empty() || (!current_class.empty() && current_class.find(class_filter) != std::string::npos)) {
-            devices.push_back(current_device);
-        }
+        pci_device_cache.push_back(current_device);
+        pci_class_cache.push_back(current_class);
     }
+    pci_cache_loaded = true;
 }
 
+// Simplified functions that filter the cache
 std::vector<PciDevice> getGpuDevices() {
+    loadPciDeviceCache();
     std::vector<PciDevice> devices;
-    parseLspciVmm("lspci -vmm", devices, "VGA compatible controller");
+    for (size_t i = 0; i < pci_device_cache.size(); ++i) {
+        if (pci_class_cache[i].find("VGA compatible controller") != std::string::npos) {
+            devices.push_back(pci_device_cache[i]);
+        }
+    }
     return devices;
 }
-std::string get_pci_slot_from_device_path(const std::string& path) {
-    fs::path device_path(path);
-    if (fs::exists(device_path) && fs::is_symlink(device_path)) {
-        fs::path target_path = fs::read_symlink(device_path);
-        if (target_path.string().find("pci") != std::string::npos) {
-            return target_path.filename().string();
-        }
-    }
-    return "";
-}
-
 std::vector<PciDevice> getAudioDevices() {
+    loadPciDeviceCache();
     std::vector<PciDevice> devices;
-    const std::string sound_path = "/sys/class/sound/";
-
-    if (!fs::exists(sound_path) || !fs::is_directory(sound_path)) {
-        return devices;
-    }
-
-    for (const auto& entry : fs::directory_iterator(sound_path)) {
-        if (entry.is_directory() && entry.path().filename().string().rfind("card", 0) == 0) {
-            fs::path device_symlink = entry.path() / "device";
-            std::string pci_slot = get_pci_slot_from_device_path(device_symlink.string());
-
-            if (!pci_slot.empty()) {
-                std::string cmd = "lspci -s " + pci_slot + " -vmm";
-                parseLspciVmm(cmd, devices);
-            }
+    for (size_t i = 0; i < pci_device_cache.size(); ++i) {
+        if (pci_class_cache[i].find("Audio") != std::string::npos) {
+            devices.push_back(pci_device_cache[i]);
         }
     }
     return devices;
 }
 std::vector<PciDevice> getNetworkDevices() {
+    loadPciDeviceCache();
     std::vector<PciDevice> devices;
-    parseLspciVmm("lspci -vmm", devices, "Ethernet controller");
-    parseLspciVmm("lspci -vmm", devices, "Network controller");
-    return devices;
-}
-std::vector<MonitorInfo> getMonitorInfo() {
-    std::vector<MonitorInfo> monitors;
-    std::string xrandr_output = exec("xrandr --query");
-    std::stringstream ss(xrandr_output);
-    std::string line, current_monitor_name;
-    while (std::getline(ss, line)) {
-        if (line.find(" connected") != std::string::npos) {
-            current_monitor_name = line.substr(0, line.find(" "));
-        } else if (!current_monitor_name.empty() && line.find("   ") == 0 && line.find("*") != std::string::npos) {
-             MonitorInfo mon; mon.name = current_monitor_name;
-             std::stringstream res_ss(line); res_ss >> mon.resolution;
-             monitors.push_back(mon);
-             current_monitor_name = "";
+    for (size_t i = 0; i < pci_device_cache.size(); ++i) {
+        if (pci_class_cache[i].find("Ethernet controller") != std::string::npos ||
+            pci_class_cache[i].find("Network controller") != std::string::npos) {
+            devices.push_back(pci_device_cache[i]);
         }
     }
-    return monitors;
+    return devices;
 }

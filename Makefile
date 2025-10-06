@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -O2
-# Adiciona a biblioteca do filesystem para a nova detecção de áudio
-LDLIBS = -lncursesw -lstdc++fs
+# A biblioteca do filesystem não é mais necessária
+LDLIBS = -lncursesw
 TARGET = device_viewer
 SRCS = main.cpp sys_info.cpp
 OBJS = $(SRCS:.cpp=.o)
